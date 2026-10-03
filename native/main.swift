@@ -83,6 +83,7 @@ final class Overlay: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     var items: [[String:Any]] = []
     var bubbleMode: String?
     var response = ""
+    var chatBackend = "vscode"
     var transcript: NSTextView?
     var input: NSTextField?
     var sendButton: ActionButton?
@@ -142,6 +143,9 @@ final class Overlay: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     func receive(_ message: [String:Any]) {
         switch message["type"] as? String {
         case "config":
+            let nextBackend = message["chatBackend"] as? String ?? chatBackend
+            let changedBackend = nextBackend != chatBackend
+            chatBackend = nextBackend
             enabled = message["enabled"] as? Bool ?? enabled
             focused = message["focused"] as? Bool ?? focused
             followCursor = message["followCursor"] as? Bool ?? followCursor
@@ -154,6 +158,7 @@ final class Overlay: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             panel.setContentSize(NSSize(width:size,height:size*208/192))
             badge.frame = NSRect(x:size-22,y:8,width:18,height:16)
             positionPet(); updateVisibility()
+            if changedBackend && bubbleMode == "chat" { buildBubble() }
         case "focus": focused = message["focused"] as? Bool ?? false; updateVisibility()
         case "activities":
             items = message["items"] as? [[String:Any]] ?? []
@@ -289,7 +294,7 @@ final class Overlay: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             let body = NSTextView(frame:NSRect(x:0,y:0,width:310,height:240)); body.isEditable = false; body.isSelectable = true; body.drawsBackground = false
             body.font = .systemFont(ofSize:13); body.textColor = .labelColor
             body.textContainer?.widthTracksTextView = true; body.autoresizingMask = [.width]
-            body.string = response.isEmpty ? "在这里和小蕾米聊聊。\n\n使用你在编辑器中启用的模型。文件不会自动附带。" : response
+            body.string = response.isEmpty ? (chatBackend == "codex" ? "在这里和小蕾米聊聊。\n\n使用本机已登录的 Codex 账号。可读取工作区；工具操作受账号服务的审批与沙箱约束。历史由 CLI 保存。" : "在这里和小蕾米聊聊。\n\n使用你在编辑器中启用的模型。文件不会自动附带。") : response
             body.setAccessibilityLabel("聊天记录"); scroll.documentView = body; transcript = body
             stack.addArrangedSubview(scroll); scroll.widthAnchor.constraint(equalTo:stack.widthAnchor).isActive = true
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant:210).isActive = true
@@ -302,6 +307,11 @@ final class Overlay: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             row.addArrangedSubview(send); row.addArrangedSubview(cancel)
             row.addArrangedSubview(ActionButton("在编辑器聊天") { emit(["type":"openChat"]) })
             stack.addArrangedSubview(row)
+            let tools = NSStackView(); tools.orientation = .horizontal
+            tools.addArrangedSubview(text(chatBackend == "codex" ? "Codex 账号" : "编辑器模型",font:.systemFont(ofSize:10),color:.secondaryLabelColor))
+            tools.addArrangedSubview(ActionButton("新聊天") { emit(["type":"newChat"]) })
+            if chatBackend == "codex" { tools.addArrangedSubview(ActionButton("历史") { emit(["type":"history"]) }) }
+            stack.addArrangedSubview(tools)
         } else {
             let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.drawsBackground = false
             let list = FlippedStack(); list.orientation = .vertical; list.alignment = .leading; list.spacing = 12; list.translatesAutoresizingMaskIntoConstraints = false
@@ -359,7 +369,7 @@ final class Overlay: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         }
     }
     func writeSnapshot() {
-        let value: [String:Any] = ["type":"snapshot","visible":panel.isVisible,"focused":focused,"editorPID":Int(editorPID ?? 0),"frontBundle":NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "none","frontPID":Int(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0),"state":clock.state,"row":currentFrame.row,"column":currentFrame.column,"frame":["x":panel.frame.minX,"y":panel.frame.minY,"width":panel.frame.width,"height":panel.frame.height],"activities":items.count,"bubble":bubbleMode ?? "none","ownerFound":ownerRect != nil,"clickThrough":panel.ignoresMouseEvents]
+        let value: [String:Any] = ["type":"snapshot","chatBackend":chatBackend,"chatBusy":chatBusy,"transcriptCharacters":response.count,"visible":panel.isVisible,"focused":focused,"editorPID":Int(editorPID ?? 0),"frontBundle":NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "none","frontPID":Int(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0),"state":clock.state,"row":currentFrame.row,"column":currentFrame.column,"frame":["x":panel.frame.minX,"y":panel.frame.minY,"width":panel.frame.width,"height":panel.frame.height],"activities":items.count,"bubble":bubbleMode ?? "none","ownerFound":ownerRect != nil,"clickThrough":panel.ignoresMouseEvents]
         emit(value)
         if let stateFile, let data = try? JSONSerialization.data(withJSONObject:value,options:[.prettyPrinted,.sortedKeys]) { try? data.write(to:URL(fileURLWithPath:stateFile),options:.atomic) }
     }

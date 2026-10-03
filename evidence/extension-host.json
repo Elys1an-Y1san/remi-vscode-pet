@@ -14,6 +14,7 @@
     "real shell task failure exit 7",
     "all nine animation states confirmed by native row readback",
     "native resize and restore",
-    "show/hide confirmed by native window readback"
+    "show/hide confirmed by native window readback",
+    "chat backend config and new chat bubble confirmed by native readback"
   ]
 }

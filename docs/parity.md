@@ -15,9 +15,9 @@
 | 拖动 | 左右动作、位置保存、边界约束 | ［KNOWN｜HIGH］对应能力；无原版抛掷物理参数 |
 | 工作状态 | 编辑器任务、终端、调试和第三方主动上报 | ［KNOWN｜HIGH］宿主适配；不等同原账号任务 |
 | 动态列表 | 状态角标、打开、停止、收起 | ［KNOWN｜HIGH］对应能力；卡片布局独立实现 |
-| 审批 | 其他扩展调用 requestApproval，用户允许或拒绝 | ［KNOWN｜HIGH］本地接入；不连原账号审批 |
-| 快捷聊天 | 语言模型选择、流式回复、停止、本次会话历史 | ［KNOWN｜HIGH］宿主适配，需可用模型 |
-| 原账号聊天与历史 | 未接入 | ［KNOWN｜HIGH］缺少授权服务接口 |
+| 审批 | 本地扩展审批，以及本扩展账号会话的命令/文件审批、提问 | ［KNOWN｜HIGH］服务协议接入；不接管其他聊天 |
+| 快捷聊天 | 编辑器模型或账号后端；流式回复、停止、新聊天 | ［COMPUTED｜HIGH］账号真实回复和中断通过 |
+| 账号会话历史 | 恢复本扩展创建的 CLI 会话；未导入原版云聊天 | ［COMPUTED｜HIGH］真实持久化与重新连接恢复通过 |
 | 实时语音、屏幕上下文、文件附件 | 未实现 | ［KNOWN｜HIGH］明确差距 |
 | 宠物云分享、云管理 | 未实现 | ［KNOWN｜HIGH］明确差距 |
 | 多种角色选择 | 仅用户要求的小蕾米 | ［KNOWN｜HIGH］单角色范围 |
@@ -25,4 +25,6 @@
 
 ［KNOWN｜HIGH］快捷聊天使用 [Language Model API](https://code.visualstudio.com/api/extension-guides/ai/language-model)。原生悬浮方案在 [Webview API](https://code.visualstudio.com/api/extension-guides/webview) 的面板能力之外，由扩展管理辅助进程。
 
-［INFERRED｜HIGH］完成原账号的全部服务功能需要服务方提供授权集成能力；仅靠原宠物图片和本地精灵图无法完成这些服务。
+［COMPUTED｜HIGH］0.2.0 使用 [Codex App Server](https://developers.openai.com/codex/app-server) 的正式协议复用本机登录；不读取或复制令牌。真实验证使用应用自带 CLI 0.159.0-alpha.12.1。系统 PATH 中的 0.144.1 曾因默认模型要求更高版本而失败，代码因此优先检测应用自带版本。
+
+［KNOWN｜HIGH］修正 0.1.1 的范围说明：此前“没有授权服务接口”的表述过宽；已有正式账号服务协议，但其接入不等于原版云聊天同步或所有服务可用。语音等剩余能力尚未在此扩展完成。

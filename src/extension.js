@@ -4,12 +4,15 @@ const { spawn, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const readline = require('node:readline');
 const { Activities, STATES } = require('./activity');
+const { CodexClient, transcriptFromThread } = require('./codex');
 
 function activate(context) {
   const output = vscode.window.createOutputChannel('小蕾米');
   context.subscriptions.push(output);
   let child, ready = false, disposed = false, visible = context.globalState.get('visible', true);
   let lastConfig = {}, restartCount = 0, retryTimer, chatToken, selectedModel, chatHistory = [], transcript = '';
+  let account, accountAbort, accountThread, currentBackend = 'vscode';
+  const sessionStore = context.workspaceState || context.globalState;
   const pending = new Map();
   const snapshotWaiters = new Set();
   const deferred = [];
@@ -36,7 +39,7 @@ function activate(context) {
   }
   function syncConfig() {
     const c = config(), pos = context.globalState.get('position', {});
-    lastConfig = {type:'config', editorPID, alwaysVisible:c.get('alwaysVisible'), enabled:c.get('enabled') && visible, focused:vscode.window.state.focused, size:c.get('size'), followCursor:c.get('followCursor'), reducedMotion:c.get('reducedMotion'), ...pos};
+    lastConfig = {type:'config', editorPID, chatBackend:accountAbort?'codex':chatToken?'vscode':c.get('chatBackend','vscode'), alwaysVisible:c.get('alwaysVisible'), enabled:c.get('enabled') && visible, focused:vscode.window.state.focused, size:c.get('size'), followCursor:c.get('followCursor'), reducedMotion:c.get('reducedMotion'), ...pos};
     send(lastConfig);
     status.text = `${visible && c.get('enabled') ? '$(heart-filled)' : '$(heart)'} 小蕾米`;
   }
@@ -68,7 +71,7 @@ function activate(context) {
   }
   async function receive(event) {
     switch (event.type) {
-      case 'ready': ready = true; output.appendLine(`浮窗就绪，${event.frames} 帧，PID ${event.pid}`); syncConfig(); send({type:'activities', ...actions.snapshot()}); for(const message of deferred.splice(0))send(message); break;
+      case 'ready': ready = true; output.appendLine(`浮窗就绪，${event.frames} 帧，PID ${event.pid}`); syncConfig(); send({type:'activities', ...actions.snapshot()}); if(transcript)send({type:'chat',text:transcript,busy:!!(chatToken||accountAbort)}); for(const message of deferred.splice(0))send(message); break;
       case 'position':
         if (Number.isFinite(event.x) && Number.isFinite(event.y)) await context.globalState.update('position',{offsetX:event.x,offsetY:event.y}); break;
       case 'hide': visible = false; await context.globalState.update('visible',false); syncConfig(); break;
@@ -76,14 +79,19 @@ function activate(context) {
       case 'dismiss': actions.dismiss(event.id); break;
       case 'action': await actions.act(event.id,event.action); break;
       case 'chat': if (typeof event.text === 'string' && event.text.trim()) await chat(event.text.slice(0,16000)); break;
-      case 'cancelChat': chatToken?.cancel(); break;
+      case 'cancelChat': chatToken?.cancel(); accountAbort?.abort(); break;
+      case 'newChat': await newChat(); break;
+      case 'history': await selectHistory(); break;
       case 'openChat': await vscode.commands.executeCommand('workbench.action.chat.open'); break;
       case 'error': void vscode.window.showErrorMessage(event.message); break;
       case 'snapshot': for (const waiter of snapshotWaiters) waiter(event); snapshotWaiters.clear(); break;
     }
   }
   async function chat(text) {
+    if (config().get('chatBackend','vscode') === 'codex') return accountChat(text);
+    if (accountAbort) return;
     if (chatToken) { send({type:'chat',text:transcript,busy:true}); return; }
+    if(currentBackend!=='vscode'){transcript='';chatHistory=[];currentBackend='vscode';}
     const token = new vscode.CancellationTokenSource(); chatToken = token;
     const before = transcript;
     transcript += `${transcript ? '\n\n' : ''}你：${text}\n\n小蕾米：`;
@@ -115,8 +123,103 @@ function activate(context) {
     } catch (error) {
       transcript += token.token.isCancellationRequested ? '[已停止]' : `\n${error.message || '回复失败，请重试。'}`;
     } finally {
-      actions.remove('remi-chat'); chatToken = undefined; token.dispose(); send({type:'chat',text:transcript,busy:false});
+      actions.remove('remi-chat'); chatToken = undefined; token.dispose(); send({type:'chat',text:transcript,busy:false}); syncConfig();
     }
+  }
+  function getAccount() {
+    if(!account || account.closed) {
+      const cwd=vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || context.globalStorageUri.fsPath;
+      if(!vscode.workspace.workspaceFolders?.length)fs.mkdirSync(cwd,{recursive:true});
+      account=new CodexClient({executable:config().get('codexPath',''),cwd});
+    }
+    return account;
+  }
+  async function accountRequest(method,params,signal) {
+    const id=`codex-request:${++sequence}`;
+    if(method==='item/commandExecution/requestApproval' || method==='item/fileChange/requestApproval') {
+      if(method==='item/fileChange/requestApproval' && !params.item?.changes?.length)return {decision:'decline'};
+      const detail=JSON.stringify(params,null,2);
+      return new Promise(resolve=>{
+        let settled=false;
+        const finish=decision=>{if(settled)return;settled=true;signal.removeEventListener('abort',abort);actions.remove(id);resolve({decision});};
+        const abort=()=>finish('decline');signal.addEventListener('abort',abort,{once:true});
+        if(signal.aborted){abort();return;}
+        actions.update(id,{title:'账号任务需要确认',body:'查看完整请求后，可单次允许或拒绝。',state:'waiting'},{
+          open:async()=>{const answer=await vscode.window.showWarningMessage('是否允许这项账号任务操作？',{modal:true,detail},'单次允许');if(!signal.aborted)finish(answer==='单次允许'?'accept':'decline');},
+          deny:()=>finish('decline')
+        });
+        send({type:'bubble',mode:'activities'});
+      });
+    }
+    if(method==='item/tool/requestUserInput') {
+      const answers={};
+      actions.update(id,{title:'账号任务等待回答',body:'请在编辑器输入框中回答。',state:'waiting'});
+      const token=new vscode.CancellationTokenSource();const abort=()=>token.cancel();signal.addEventListener('abort',abort,{once:true});
+      try {
+        for(const question of params.questions||[]) {
+          if(signal.aborted)break;
+          const choices=question.options||[];
+          let value;
+          if(choices.length && !question.isSecret) {
+            const rows=choices.map(o=>({label:o.label,detail:o.description}));
+            if(question.isOther)rows.push({label:'自行填写',custom:true});
+            const selected=await vscode.window.showQuickPick(rows,{title:question.question},token.token);
+            if(selected?.custom)value=await vscode.window.showInputBox({prompt:question.question},token.token);else value=selected?.label;
+          } else value=await vscode.window.showInputBox({prompt:question.question,password:!!question.isSecret},token.token);
+          if(value===undefined || signal.aborted){accountAbort?.abort();break;}
+          answers[question.id]={answers:[value]};
+        }
+      } finally {signal.removeEventListener('abort',abort);token.dispose();actions.remove(id);}
+      return {answers};
+    }
+    // Unknown request types receive a protocol error, never implicit approval.
+    return undefined;
+  }
+  async function accountChat(text) {
+    if(accountAbort || chatToken)return;
+    accountAbort=new AbortController();const controller=accountAbort;
+    if(currentBackend!=='codex'){account?.dispose();account=undefined;accountThread=undefined;transcript='';currentBackend='codex';}
+    transcript+=`${transcript?'\n\n':''}你：${text}\n\n小蕾米：`;
+    const prefix=transcript;
+    send({type:'chat',text:prefix+'正在连接账号…',busy:true});
+    actions.update('remi-chat',{title:'与小蕾米聊天',state:'running',body:'账号模型正在回复'},{cancel:()=>controller.abort()});
+    try {
+      if(!vscode.workspace.isTrusted)throw Error('当前工作区处于受限模式，账号聊天未启动。');
+      const client=getAccount();
+      if(!client.threadId) {
+        const previous=accountThread;
+        const thread=await client.open(previous || null);accountThread=thread.id;
+        if(!previous){const sessions=sessionStore.get('codexSessions',[]);
+          await sessionStore.update('codexSessions',[{id:thread.id,title:text.slice(0,80)},...sessions].slice(0,50));}
+      }
+      let lastSend=0;
+      const result=await client.turn(text,{signal:controller.signal,onRequest:accountRequest,
+        onText:value=>{transcript=(prefix+value).slice(-60000);if(Date.now()-lastSend>60){send({type:'chat',text:transcript,busy:true});lastSend=Date.now();}},
+        onActivity:kind=>actions.update('remi-chat',{title:'账号任务',state:'running',body:{commandExecution:'执行命令',fileChange:'修改文件',mcpToolCall:'调用已配置工具'}[kind]},{cancel:()=>controller.abort()})});
+      transcript=(prefix+result.text+(result.interrupted?'\n[已停止]':'')).slice(-60000);
+    } catch(error) {transcript+=controller.signal.aborted?'\n[已停止]':`\n${error.message}`;}
+    finally {accountAbort=undefined;actions.remove('remi-chat');send({type:'chat',text:transcript,busy:false});syncConfig();}
+  }
+  async function newChat() {
+    if(chatToken || accountAbort){void vscode.window.showErrorMessage('请先停止当前回复，再新建聊天。');return;}
+    account?.dispose();account=undefined;accountThread=undefined;chatHistory=[];transcript='';
+    send({type:'chat',text:'',busy:false});await show();send({type:'bubble',mode:'chat'});
+  }
+  async function selectHistory() {
+    if(chatToken || accountAbort){void vscode.window.showErrorMessage('请先停止当前回复，再切换聊天。');return;}
+    if(config().get('chatBackend','vscode')!=='codex'){void vscode.window.showErrorMessage('持久会话历史需要在设置中选择 Codex 账号后端。');return;}
+    if(!vscode.workspace.isTrusted){void vscode.window.showErrorMessage('受限模式不能恢复账号会话。');return;}
+    const sessions=sessionStore.get('codexSessions',[]);
+    if(!sessions.length){void vscode.window.showInformationMessage('当前工作区还没有小蕾米账号会话。');return;}
+    const choice=await vscode.window.showQuickPick(sessions.map(s=>({label:s.title,id:s.id})),{title:'恢复小蕾米创建的会话'});
+    if(!choice)return;
+    // Reserve the chat while resume is in flight, so a new prompt cannot race it.
+    accountAbort=new AbortController();
+    try {
+      const thread=await getAccount().open(choice.id);accountThread=thread.id;currentBackend='codex';
+      transcript=transcriptFromThread(thread);send({type:'chat',text:transcript,busy:false});await show();send({type:'bubble',mode:'chat'});
+    } catch(error){void vscode.window.showErrorMessage(error.message);}
+    finally{accountAbort=undefined;}
   }
   function register(name, fn) { context.subscriptions.push(vscode.commands.registerCommand(name,fn)); }
   async function show() { visible = true; await context.globalState.update('visible',true); if (!config().get('enabled')) await config().update('enabled',true,vscode.ConfigurationTarget.Global); start(); syncConfig(); }
@@ -124,6 +227,8 @@ function activate(context) {
   register('remi.hide', async()=>{ visible=false; await context.globalState.update('visible',false); send({type:'hide'}); syncConfig(); });
   register('remi.toggle', ()=>vscode.commands.executeCommand(visible ? 'remi.hide' : 'remi.show'));
   register('remi.chat', async()=>{await show(); send({type:'bubble',mode:'chat'});});
+  register('remi.newChat',newChat);
+  register('remi.chatHistory',selectHistory);
   register('remi.activities', async()=>{await show(); send({type:'bubble',mode:'activities'});});
   register('remi.resetPosition', ()=>{send({type:'reset'});});
   register('remi.settings', ()=>vscode.commands.executeCommand('workbench.action.openSettings','@ext:local-remi.remi-companion'));
@@ -195,7 +300,7 @@ function activate(context) {
     inspect() { return {ready,visible,...actions.snapshot()}; }
   };
   context.subscriptions.push({dispose(){
-    disposed = true; clearTimeout(retryTimer); chatToken?.cancel();
+    disposed = true; clearTimeout(retryTimer); chatToken?.cancel(); accountAbort?.abort();account?.dispose();
     for(const cancel of pending.values()) cancel();
     send({type:'quit'}); child?.stdin.end();
     const processToStop=child; const killTimer=setTimeout(()=>processToStop?.kill(),1000); killTimer.unref();

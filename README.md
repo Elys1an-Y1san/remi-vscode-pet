@@ -2,7 +2,7 @@
 
 ［KNOWN｜HIGH］使用原始“小蕾米”透明动画素材，在 macOS 的 VS Code 编辑器上方显示原生悬浮宠物。不是侧栏页面。当前安装包适用于 Apple Silicon，macOS 13 或更新版本。
 
-［KNOWN｜HIGH］当前为 **0.1.1 预发布版**。[下载 VSIX 安装包](https://github.com/Elys1an-Y1san/remi-vscode-pet/releases/tag/v0.1.1)。自动化与宿主测试通过的项目和未完成的实机覆盖，分别记录在 `evidence/manual-qa.md` 中。
+［KNOWN｜HIGH］当前为 **0.2.0 预发布版**。[下载 VSIX 安装包](https://github.com/Elys1an-Y1san/remi-vscode-pet/releases/tag/v0.2.0)。自动化与宿主测试通过的项目和未完成的实机覆盖，分别记录在 `evidence/manual-qa.md` 中。
 
 ## 使用
 
@@ -14,11 +14,17 @@
 
 ## 聊天与原版差异
 
-［KNOWN｜HIGH］快捷聊天调用编辑器提供的语言模型，需要编辑器已有可用模型及相应登录。首次可选择模型；支持流式回复、停止和本次会话历史。不会自动发送文件内容，不保存聊天记录到磁盘。
+［KNOWN｜HIGH］快捷聊天调用编辑器提供的语言模型，需要编辑器已有可用模型及相应登录。首次可选择模型；支持流式回复、停止和本次会话历史。此默认后端不会自动发送文件内容，聊天记录仅保留在内存。
 
 ［KNOWN｜HIGH］宠物素材保持原文件；9 种动作的帧数、帧时长及 16 方向映射根据本机原版实现核对。原图中多出的未使用格也保留，不重新绘制。
 
-［KNOWN｜HIGH］原版账号内的云聊天、实时语音、屏幕分享、跨聊天审批及宠物云分享未接入。本扩展没有这些服务的授权接口，因此不宣称“全部功能一比一”。逐项对应见源码中的 `docs/parity.md`。
+［COMPUTED｜HIGH］新增可选 **Codex 账号后端**：设置 `remi.chatBackend` 为 `codex`，复用本机 CLI 登录。留空 `remi.codexPath` 时优先检测已安装应用自带的 CLI，再尝试 PATH。支持流式回复、停止、新聊天、恢复本扩展创建的历史会话、命令/文件操作审批及服务端提问。原生浮窗显示当前后端。
+
+［KNOWN｜HIGH］账号后端可读取当前工作区，采用只读沙箱和服务端 `untrusted` 审批策略；服务端请求额外授权时，动态列表中的“查看”会显示完整请求，再由用户单次允许或拒绝。模型和工具能力由本机 CLI 配置决定。CLI 保存会话历史；扩展仅保存会话 ID 和首条消息的前 80 字作为标题，最多 50 条。切换工作区后历史入口分别记录。它不导入其他扩展或原版云聊天。
+
+［COMPUTED｜HIGH］真实账号流式回复、断开重连后的会话恢复、首次输出后中断已通过；协议依据 [Codex App Server 官方文档](https://developers.openai.com/codex/app-server)。旧 CLI 可能无法使用新模型，可通过 `remi.codexPath` 指定更新版本。
+
+［KNOWN｜HIGH］原版云聊天同步、实时语音、屏幕分享、文件附件、跨聊天审批及宠物云分享仍未接入，不宣称“全部功能一比一”。逐项对应见源码中的 `docs/parity.md`。
 
 ## 安装和开发
 
@@ -30,6 +36,8 @@ npm test
 npm run build
 npm run test:host
 npm run package
+# 可选：调用真实账号，创建并归档独立测试会话
+npm run test:account
 ```
 
 ［KNOWN｜HIGH］构建原生组件需要系统 Swift 编译器；安装包自带已构建组件，使用时不需要编译。运行时无 npm 依赖，不修改编辑器安装文件，不申请辅助功能权限，不启动网络监听服务。

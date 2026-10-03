@@ -9,7 +9,7 @@ const {Activities,STATES}=require('../src/activity');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 async function until(check){for(let i=0;i<100;i++){if(check())return;await tick();}throw Error('Expected extension event not received');}
 
-function harness({store=new Map(),trusted=true,models=[]}={}){
+function harness({store=new Map(),trusted=true,models=[],settings={},accountClass}={}){
  const handlers=new Map(),messages=[],commands=new Map();
  const event=name=>fn=>{handlers.set(name,fn);return{dispose(){handlers.delete(name);}};};
  const child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();
@@ -20,9 +20,9 @@ function harness({store=new Map(),trusted=true,models=[]}={}){
  const vscode={
   window:{state:{focused:true},createOutputChannel:()=>({append(){},appendLine(){},dispose(){}}),
    createStatusBarItem:()=>({show(){},dispose(){}}),showErrorMessage:async text=>state.errors.push(text),
-   showQuickPick:async rows=>rows[0],onDidChangeWindowState:event('focus'),
+   showQuickPick:async rows=>rows[0],showWarningMessage:async(_text,options)=>{state.detail=options.detail;return '单次允许';},showInformationMessage:async()=>{},onDidChangeWindowState:event('focus'),
    onDidStartTerminalShellExecution:event('shellStart'),onDidEndTerminalShellExecution:event('shellEnd')},
-  workspace:{isTrusted:trusted,getConfiguration:()=>({get:key=>({enabled:true,size:112,followCursor:true,reducedMotion:false,alwaysVisible:false,trackTasks:true,model:''}[key]),update:async()=>{}}),onDidChangeConfiguration:event('config')},
+  workspace:{workspaceFolders:[{uri:{fsPath:'/test'}}],isTrusted:trusted,getConfiguration:()=>({get:(key,fallback)=>({...{enabled:true,size:112,followCursor:true,reducedMotion:false,alwaysVisible:false,trackTasks:true,model:''},...settings}[key]??fallback),update:async()=>{}}),onDidChangeConfiguration:event('config')},
   commands:{registerCommand:(name,fn)=>{commands.set(name,fn);return{dispose(){commands.delete(name);}};},executeCommand:async(name,...args)=>commands.get(name)?.(...args)},
   StatusBarAlignment:{Right:1},ConfigurationTarget:{Global:1},
   tasks:{onDidStartTask:event('taskStart'),onDidEndTaskProcess:event('taskProcessEnd'),onDidEndTask:event('taskEnd')},
@@ -32,8 +32,8 @@ function harness({store=new Map(),trusted=true,models=[]}={}){
   LanguageModelChatMessage:{User:content=>({role:'user',content}),Assistant:content=>({role:'assistant',content})}
  };
  const context={subscriptions,globalState:{get:(key,fallback)=>store.has(key)?store.get(key):fallback,update:async(key,value)=>store.set(key,value)},asAbsolutePath:file=>path.resolve(file)};
- const box={module:{exports:{}},exports:{},process:{platform:'darwin',arch:'arm64',pid:123},setTimeout,clearTimeout,console,
-  require:id=>id==='vscode'?vscode:id==='node:child_process'?{spawn:()=>child,execFileSync:()=> '1 /Applications/Code.app/Contents/MacOS/Code'}:id==='node:fs'?{existsSync:()=>true}:id==='./activity'?{Activities,STATES}:require(id)};
+ const box={module:{exports:{}},exports:{},process:{platform:'darwin',arch:'arm64',pid:123},setTimeout,clearTimeout,console,AbortController,
+  require:id=>id==='vscode'?vscode:id==='node:child_process'?{spawn:()=>child,execFileSync:()=> '1 /Applications/Code.app/Contents/MacOS/Code'}:id==='node:fs'?{existsSync:()=>true}:id==='./activity'?{Activities,STATES}:id==='./codex'?{...require('../src/codex'),...(accountClass?{CodexClient:accountClass}:{})}:require(id)};
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../src/extension.js'),'utf8'),box);
  const api=box.module.exports.activate(context);native({type:'ready',frames:73,pid:222});
  return{api,native,messages,commands,handlers,state,store,dispose(){for(const disposable of subscriptions)disposable.dispose();child.stdout.end();child.stderr.end();}};
@@ -63,7 +63,7 @@ test('chat streams provider response and includes previous turns only in memory'
  const h=harness({models:[model]});h.native({type:'chat',text:'First'});
  await until(()=>h.messages.some(m=>m.type==='chat'&&!m.busy&&m.text.includes('Hello world')));
  assert.equal(h.api.inspect().items.length,0);
- h.native({type:'chat',text:'Second'});await until(()=>prompts.length===2&&h.messages.at(-1)?.busy===false);
+ h.native({type:'chat',text:'Second'});await until(()=>prompts.length===2&&h.messages.findLast(m=>m.type==='chat')?.busy===false);
  assert.ok(prompts[1].some(m=>m.content==='First'));assert.ok(prompts[1].some(m=>m.content==='Hello world'));
  assert.equal(h.store.size,0);h.dispose();
 });
@@ -89,4 +89,42 @@ test('provider failure clears the work state instead of leaving a stuck animatio
  const h=harness({models:[{id:'failure',async sendRequest(){throw Error('Test provider disconnected');}}]});
  h.native({type:'chat',text:'Hello'});await until(()=>h.messages.some(m=>m.type==='chat'&&!m.busy&&m.text.includes('disconnected')));
  assert.equal(h.api.inspect().state,'idle');h.dispose();
+});
+
+test('account backend routes a full approval through explicit review and persists only session metadata',async()=>{
+ const longCommand='a'.repeat(1000);let decision;
+ class FakeAccount extends EventEmitter {
+  async open(){return{id:'own',turns:[]};}
+  async turn(_text,{onText,onRequest}){onText('Reply');decision=await onRequest('item/commandExecution/requestApproval',{threadId:'own',command:longCommand},new AbortController().signal);return{text:'Reply',interrupted:false};}
+  dispose(){this.closed=true;this.emit('closed');}
+ }
+ const h=harness({settings:{chatBackend:'codex'},accountClass:FakeAccount});
+ try{
+  h.native({type:'chat',text:'Check project'});
+  await until(()=>h.api.inspect().items.some(i=>i.id.startsWith('codex-request:')));
+  const activity=h.api.inspect().items.find(i=>i.id.startsWith('codex-request:'));
+  assert.deepEqual(Array.from(activity.actions),['open','deny']);
+  h.native({type:'action',id:activity.id,action:'open'});
+  await until(()=>h.messages.some(m=>m.type==='chat'&&!m.busy&&m.text.includes('Reply')));
+  assert.equal(decision.decision,'accept');assert.ok(h.state.detail.includes(longCommand));
+  assert.equal(h.store.get('codexSessions')[0].id,'own');assert.equal(h.api.inspect().items.length,0);
+ }finally{h.dispose();}
+});
+
+test('account backend never starts in an untrusted workspace',async()=>{
+ let started=false;
+ class FakeAccount{constructor(){started=true;}}
+ const h=harness({trusted:false,settings:{chatBackend:'codex'},accountClass:FakeAccount});
+ try{h.native({type:'chat',text:'Hello'});await until(()=>h.messages.some(m=>m.type==='chat'&&!m.busy&&m.text.includes('受限模式')));assert.equal(started,false);}finally{h.dispose();}
+});
+
+test('stopping while an approval is open resolves it as decline and clears pending cards',async()=>{
+ let answer;
+ class FakeAccount extends EventEmitter {
+  async open(){return{id:'own',turns:[]};}
+  async turn(_text,{onRequest,signal}){answer=await onRequest('item/commandExecution/requestApproval',{threadId:'own',command:'test'},signal);return{text:'',interrupted:true};}
+  dispose(){this.closed=true;this.emit('closed');}
+ }
+ const h=harness({settings:{chatBackend:'codex'},accountClass:FakeAccount});
+ try{h.native({type:'chat',text:'Hello'});await until(()=>h.api.inspect().state==='waiting');h.native({type:'cancelChat'});await until(()=>answer);assert.equal(answer.decision,'decline');await until(()=>h.api.inspect().items.length===0);}finally{h.dispose();}
 });

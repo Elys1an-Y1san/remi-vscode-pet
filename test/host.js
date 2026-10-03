@@ -39,6 +39,12 @@ async function run(){
  await vscode.commands.executeCommand('remi.show');assert.equal(api.inspect().visible,true);
  await until(async()=>(await vscode.commands.executeCommand('remi.inspect')).native?.visible===true);
  report.tests.push('show/hide confirmed by native window readback');
+ await vscode.workspace.getConfiguration('remi').update('chatBackend','codex',vscode.ConfigurationTarget.Global);
+ await vscode.commands.executeCommand('remi.newChat');
+ await until(async()=>{const s=(await vscode.commands.executeCommand('remi.inspect')).native;return s?.chatBackend==='codex'&&s?.bubble==='chat';});
+ await vscode.workspace.getConfiguration('remi').update('chatBackend',undefined,vscode.ConfigurationTarget.Global);
+ await until(async()=>(await vscode.commands.executeCommand('remi.inspect')).native?.chatBackend==='vscode');
+ report.tests.push('chat backend config and new chat bubble confirmed by native readback');
  await vscode.workspace.getConfiguration('remi').update('followCursor',undefined,vscode.ConfigurationTarget.Global);
  await vscode.workspace.getConfiguration('remi').update('reducedMotion',undefined,vscode.ConfigurationTarget.Global);
  fs.mkdirSync(path.join(__dirname,'../evidence'),{recursive:true});

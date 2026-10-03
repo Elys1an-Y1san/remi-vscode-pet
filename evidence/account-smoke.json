@@ -1,0 +1,12 @@
+{
+  "date": "2026-10-03T06:51:29.407Z",
+  "realAccountReply": true,
+  "streamedUpdates": 5,
+  "persistentResume": true,
+  "cancelAfterFirstStream": true,
+  "interrupted": true,
+  "testThreadArchived": true,
+  "nativeUIRoundTrip": true,
+  "nativeNewChatClearsTranscript": true,
+  "historyPickerUIVerified": false
+}

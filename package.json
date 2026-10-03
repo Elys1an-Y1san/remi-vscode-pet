@@ -2,7 +2,7 @@
   "name": "remi-companion",
   "displayName": "小蕾米 · 悬浮桌宠",
   "description": "原始小蕾米动画、鼠标视线跟随、拖动与任务状态，悬浮在编辑器上方。macOS 原生浮窗。",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "local-remi",
   "engines": {
     "vscode": "^1.100.0"
@@ -27,7 +27,8 @@
     "build": "bash scripts/build-native.sh",
     "test": "node --test test/*.test.js && bash scripts/test-native.sh",
     "package": "npm run build && vsce package --allow-missing-repository --skip-license --target darwin-arm64 --out remi-companion.vsix",
-    "test:host": "bash scripts/test-host.sh"
+    "test:host": "bash scripts/test-host.sh",
+    "test:account": "node scripts/test-account.js"
   },
   "devDependencies": {
     "@vscode/vsce": "^4.0.0"
@@ -65,6 +66,14 @@
       {
         "command": "remi.settings",
         "title": "小蕾米：设置"
+      },
+      {
+        "command": "remi.newChat",
+        "title": "小蕾米：新建聊天"
+      },
+      {
+        "command": "remi.chatHistory",
+        "title": "小蕾米：账号会话历史"
       }
     ],
     "configuration": {
@@ -106,6 +115,26 @@
           "type": "string",
           "default": "",
           "description": "快捷聊天模型 ID；留空时首次聊天让你选择可用模型。"
+        },
+        "remi.chatBackend": {
+          "type": "string",
+          "enum": [
+            "vscode",
+            "codex"
+          ],
+          "enumDescriptions": [
+            "使用编辑器语言模型，仅发送聊天消息。",
+            "使用本机已登录的 Codex CLI；可读取工作区并请求工具操作，历史由 CLI 保存。"
+          ],
+          "default": "vscode",
+          "description": "快捷聊天后端。",
+          "scope": "window"
+        },
+        "remi.codexPath": {
+          "type": "string",
+          "default": "",
+          "description": "Codex CLI 可执行文件路径；留空优先使用已安装应用自带版本，其次使用 PATH 中的 codex。不接受命令行参数。",
+          "scope": "machine"
         }
       }
     }
