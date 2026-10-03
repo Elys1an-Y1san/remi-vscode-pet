@@ -1,0 +1,120 @@
+{
+  "name": "remi-companion",
+  "displayName": "小蕾米 · 悬浮桌宠",
+  "description": "原始小蕾米动画、鼠标视线跟随、拖动与任务状态，悬浮在编辑器上方。macOS 原生浮窗。",
+  "version": "0.1.1",
+  "publisher": "local-remi",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "main": "./src/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": true
+  },
+  "scripts": {
+    "build": "bash scripts/build-native.sh",
+    "test": "node --test test/*.test.js && bash scripts/test-native.sh",
+    "package": "npm run build && vsce package --allow-missing-repository --skip-license --target darwin-arm64 --out remi-companion.vsix",
+    "test:host": "bash scripts/test-host.sh"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^4.0.0"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "remi.show",
+        "title": "小蕾米：显示悬浮宠物"
+      },
+      {
+        "command": "remi.hide",
+        "title": "小蕾米：隐藏"
+      },
+      {
+        "command": "remi.toggle",
+        "title": "小蕾米：显示 / 隐藏"
+      },
+      {
+        "command": "remi.chat",
+        "title": "小蕾米：快捷聊天"
+      },
+      {
+        "command": "remi.activities",
+        "title": "小蕾米：任务动态"
+      },
+      {
+        "command": "remi.animations",
+        "title": "小蕾米：预览全部动作"
+      },
+      {
+        "command": "remi.resetPosition",
+        "title": "小蕾米：重置位置"
+      },
+      {
+        "command": "remi.settings",
+        "title": "小蕾米：设置"
+      }
+    ],
+    "configuration": {
+      "title": "小蕾米",
+      "properties": {
+        "remi.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "启动时显示悬浮宠物。"
+        },
+        "remi.size": {
+          "type": "number",
+          "default": 112,
+          "minimum": 64,
+          "maximum": 240,
+          "description": "宠物宽度（像素）。"
+        },
+        "remi.followCursor": {
+          "type": "boolean",
+          "default": true,
+          "description": "使用原始 16 方向素材跟随鼠标。"
+        },
+        "remi.alwaysVisible": {
+          "type": "boolean",
+          "default": false,
+          "description": "切换到其他应用时仍显示宠物。默认只在所属编辑器窗口前台显示。"
+        },
+        "remi.reducedMotion": {
+          "type": "boolean",
+          "default": false,
+          "description": "停用连续动画和视线跟随。"
+        },
+        "remi.trackTasks": {
+          "type": "boolean",
+          "default": true,
+          "description": "显示本窗口的任务、调试与终端执行状态。"
+        },
+        "remi.model": {
+          "type": "string",
+          "default": "",
+          "description": "快捷聊天模型 ID；留空时首次聊天让你选择可用模型。"
+        }
+      }
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Elys1an-Y1san/remi-vscode-pet.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Elys1an-Y1san/remi-vscode-pet/issues"
+  }
+}

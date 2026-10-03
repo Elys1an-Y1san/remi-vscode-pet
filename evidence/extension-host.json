@@ -1,0 +1,19 @@
+{
+  "nativeReady": true,
+  "native": {
+    "ownerFound": false,
+    "visible": false,
+    "focused": true,
+    "ownerMatchesForeground": true,
+    "width": 112,
+    "height": 122
+  },
+  "tests": [
+    "parallel activity lifecycle",
+    "real shell task success",
+    "real shell task failure exit 7",
+    "all nine animation states confirmed by native row readback",
+    "native resize and restore",
+    "show/hide confirmed by native window readback"
+  ]
+}

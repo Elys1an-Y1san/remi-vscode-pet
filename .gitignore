@@ -1,0 +1,6 @@
+node_modules/
+native/build/
+*.vsix
+.DS_Store
+evidence/runtime-*.json
+dist/

@@ -1,0 +1,92 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const path=require('node:path');
+const {EventEmitter}=require('node:events');
+const {PassThrough,Writable}=require('node:stream');
+const {Activities,STATES}=require('../src/activity');
+const tick=()=>new Promise(resolve=>setImmediate(resolve));
+async function until(check){for(let i=0;i<100;i++){if(check())return;await tick();}throw Error('Expected extension event not received');}
+
+function harness({store=new Map(),trusted=true,models=[]}={}){
+ const handlers=new Map(),messages=[],commands=new Map();
+ const event=name=>fn=>{handlers.set(name,fn);return{dispose(){handlers.delete(name);}};};
+ const child=new EventEmitter();child.stdout=new PassThrough();child.stderr=new PassThrough();
+ child.stdin=new Writable({write(data,_,done){messages.push(JSON.parse(data.toString()));done();}});child.kill=()=>{};
+ const native=value=>child.stdout.write(JSON.stringify(value)+'\n');
+ const subscriptions=[];
+ const state={models,errors:[]};
+ const vscode={
+  window:{state:{focused:true},createOutputChannel:()=>({append(){},appendLine(){},dispose(){}}),
+   createStatusBarItem:()=>({show(){},dispose(){}}),showErrorMessage:async text=>state.errors.push(text),
+   showQuickPick:async rows=>rows[0],onDidChangeWindowState:event('focus'),
+   onDidStartTerminalShellExecution:event('shellStart'),onDidEndTerminalShellExecution:event('shellEnd')},
+  workspace:{isTrusted:trusted,getConfiguration:()=>({get:key=>({enabled:true,size:112,followCursor:true,reducedMotion:false,alwaysVisible:false,trackTasks:true,model:''}[key]),update:async()=>{}}),onDidChangeConfiguration:event('config')},
+  commands:{registerCommand:(name,fn)=>{commands.set(name,fn);return{dispose(){commands.delete(name);}};},executeCommand:async(name,...args)=>commands.get(name)?.(...args)},
+  StatusBarAlignment:{Right:1},ConfigurationTarget:{Global:1},
+  tasks:{onDidStartTask:event('taskStart'),onDidEndTaskProcess:event('taskProcessEnd'),onDidEndTask:event('taskEnd')},
+  debug:{onDidStartDebugSession:event('debugStart'),onDidTerminateDebugSession:event('debugEnd')},
+  CancellationTokenSource:class{constructor(){this.token={isCancellationRequested:false};}cancel(){this.token.isCancellationRequested=true;}dispose(){}},
+  lm:{selectChatModels:async()=>state.models},
+  LanguageModelChatMessage:{User:content=>({role:'user',content}),Assistant:content=>({role:'assistant',content})}
+ };
+ const context={subscriptions,globalState:{get:(key,fallback)=>store.has(key)?store.get(key):fallback,update:async(key,value)=>store.set(key,value)},asAbsolutePath:file=>path.resolve(file)};
+ const box={module:{exports:{}},exports:{},process:{platform:'darwin',arch:'arm64',pid:123},setTimeout,clearTimeout,console,
+  require:id=>id==='vscode'?vscode:id==='node:child_process'?{spawn:()=>child,execFileSync:()=> '1 /Applications/Code.app/Contents/MacOS/Code'}:id==='node:fs'?{existsSync:()=>true}:id==='./activity'?{Activities,STATES}:require(id)};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../src/extension.js'),'utf8'),box);
+ const api=box.module.exports.activate(context);native({type:'ready',frames:73,pid:222});
+ return{api,native,messages,commands,handlers,state,store,dispose(){for(const disposable of subscriptions)disposable.dispose();child.stdout.end();child.stderr.end();}};
+}
+
+test('native position and visibility persist across extension reactivation',async()=>{
+ const store=new Map();let h=harness({store});
+ h.native({type:'position',x:-420,y:125});await tick();
+ await h.commands.get('remi.hide')();h.dispose();
+ h=harness({store});const config=h.messages.find(m=>m.type==='config');
+ assert.equal(config.offsetX,-420);assert.equal(config.offsetY,125);assert.equal(config.enabled,false);
+ h.native({type:'position',x:'bad',y:NaN});await tick();assert.equal(store.get('position').offsetX,-420);
+ await h.commands.get('remi.show')();assert.equal(store.get('visible'),true);h.dispose();
+});
+
+test('approval routing resolves once, rejects duplicate IDs, and denies on disposal',async()=>{
+ const h=harness();const approval=h.api.requestApproval('one','Approve?','Test');
+ assert.throws(()=>h.api.requestApproval('one','Duplicate',''));
+ h.native({type:'action',id:'approval:one',action:'approve'});assert.equal(await approval,true);
+ h.native({type:'action',id:'approval:one',action:'deny'});assert.equal(h.api.inspect().items.length,0);
+ const pending=h.api.requestApproval('two','Pending','');h.dispose();assert.equal(await pending,false);
+});
+
+test('chat streams provider response and includes previous turns only in memory',async()=>{
+ const prompts=[];
+ const model={id:'test-model',name:'Test',vendor:'fixture',async sendRequest(messages){prompts.push(messages);return{text:(async function*(){yield 'Hello';yield ' world';})()};}};
+ const h=harness({models:[model]});h.native({type:'chat',text:'First'});
+ await until(()=>h.messages.some(m=>m.type==='chat'&&!m.busy&&m.text.includes('Hello world')));
+ assert.equal(h.api.inspect().items.length,0);
+ h.native({type:'chat',text:'Second'});await until(()=>prompts.length===2&&h.messages.at(-1)?.busy===false);
+ assert.ok(prompts[1].some(m=>m.content==='First'));assert.ok(prompts[1].some(m=>m.content==='Hello world'));
+ assert.equal(h.store.size,0);h.dispose();
+});
+
+test('unavailable model and restricted workspace produce truthful recoverable errors',async()=>{
+ for(const [trusted,expected] of [[true,'没有可用'],[false,'受限模式']]){
+  const h=harness({trusted});h.native({type:'chat',text:'Hello'});
+  await until(()=>h.messages.some(m=>m.type==='chat'&&!m.busy&&m.text.includes(expected)));
+  assert.equal(h.api.inspect().items.length,0);h.dispose();
+ }
+});
+
+test('cancel during model selection never sends a request and clears busy state',async()=>{
+ let choose;let requested=false;
+ const model={id:'slow',sendRequest:()=>{requested=true;}};
+ const h=harness();h.state.models=new Promise(resolve=>{choose=resolve;});
+ h.native({type:'chat',text:'Hello'});h.native({type:'cancelChat'});choose([model]);
+ await until(()=>h.messages.some(m=>m.type==='chat'&&!m.busy&&m.text.includes('已停止')));
+ assert.equal(requested,false);assert.equal(h.api.inspect().items.length,0);h.dispose();
+});
+
+test('provider failure clears the work state instead of leaving a stuck animation',async()=>{
+ const h=harness({models:[{id:'failure',async sendRequest(){throw Error('Test provider disconnected');}}]});
+ h.native({type:'chat',text:'Hello'});await until(()=>h.messages.some(m=>m.type==='chat'&&!m.busy&&m.text.includes('disconnected')));
+ assert.equal(h.api.inspect().state,'idle');h.dispose();
+});

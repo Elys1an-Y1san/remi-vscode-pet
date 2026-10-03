@@ -1,0 +1,10 @@
+{
+  "version": "0.1.1",
+  "assetSHA256": "d76b1beca002be412ce372aef78a592b27b238bea56e4412fb3e4c6f5efc9d8f",
+  "packageSHA256": "d85fbdc26ce2578719e2a77df09e3fd67d0635b2aafac3b450ffc0a1d8bad441",
+  "packageBytes": 4441259,
+  "originalAssetUnchanged": true,
+  "sourceAndBinaryMatchPackage": true,
+  "target": "darwin-arm64",
+  "runtimeDependencies": 0
+}

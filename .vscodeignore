@@ -1,0 +1,14 @@
+.git/**
+.vscode/**
+node_modules/**
+test/**
+evidence/**
+native/*.swift
+native/build/core-tests
+scripts/**
+*.vsix
+package-lock.json
+dist/**
+.github/**
+.gitignore
+native/Info.plist
