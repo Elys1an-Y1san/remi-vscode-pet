@@ -2,7 +2,7 @@
   "name": "remi-companion",
   "displayName": "小蕾米 · 悬浮桌宠",
   "description": "原始小蕾米动画、鼠标视线跟随、拖动与任务状态，悬浮在编辑器上方。macOS 原生浮窗。",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "local-remi",
   "engines": {
     "vscode": "^1.100.0"
@@ -28,7 +28,8 @@
     "test": "node --test test/*.test.js && bash scripts/test-native.sh",
     "package": "npm run build && vsce package --allow-missing-repository --skip-license --target darwin-arm64 --out remi-companion.vsix",
     "test:host": "bash scripts/test-host.sh",
-    "test:account": "node scripts/test-account.js"
+    "test:account": "node scripts/test-account.js",
+    "test:attachments": "node scripts/test-attachments-account.js"
   },
   "devDependencies": {
     "@vscode/vsce": "^4.0.0"

@@ -20,6 +20,18 @@ final class FlippedStack: NSStackView {
     override var isFlipped: Bool { true }
 }
 
+final class AttachmentGlass: NSVisualEffectView {
+    weak var owner: Overlay?
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard owner?.chatBusy == false, sender.draggingPasteboard.canReadObject(forClasses:[NSURL.self],options:[.urlReadingFileURLsOnly:true]) else { return [] }
+        return .copy
+    }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard owner?.chatBusy == false, let urls = sender.draggingPasteboard.readObjects(forClasses:[NSURL.self],options:[.urlReadingFileURLsOnly:true]) as? [URL], !urls.isEmpty else { return false }
+        emit(["type":"addAttachments","paths":urls.map(\.path)]); return true
+    }
+}
+
 final class ActionButton: NSButton {
     var handler: (() -> Void)?
     convenience init(_ title: String, action: @escaping () -> Void) {
@@ -83,6 +95,11 @@ final class Overlay: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
     var items: [[String:Any]] = []
     var bubbleMode: String?
     var response = ""
+    var draft = ""
+    var attachments: [[String:Any]] = []
+    var attachmentButton: ActionButton?
+    var attachmentRemovers: [ActionButton] = []
+    var activityButton: ActionButton?
     var chatBackend = "vscode"
     var transcript: NSTextView?
     var input: NSTextField?
@@ -168,6 +185,7 @@ final class Overlay: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             badge.layer?.backgroundColor = (nativeState == "failed" ? NSColor.systemRed : nativeState == "waiting" ? NSColor.systemOrange : NSColor.systemBlue).cgColor
             if !dragging && ProcessInfo.processInfo.systemUptime >= overrideUntil { restoreState() }
             if bubbleMode == "activities" { buildBubble() }
+            if bubbleMode == "chat" { activityButton?.title = "动态 \(items.count)"; activityButton?.setAccessibilityLabel("动态 \(items.count)") }
         case "animate":
             let state = message["state"] as? String ?? "idle"
             clock.set(state, now:ProcessInfo.processInfo.systemUptime, loop:false)
@@ -176,9 +194,15 @@ final class Overlay: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         case "chat":
             response = message["text"] as? String ?? ""
             chatBusy = message["busy"] as? Bool ?? false
+            if message["clearDraft"] as? Bool == true { draft = ""; input?.stringValue = "" }
             transcript?.string = response
             transcript?.scrollToEndOfDocument(nil)
             sendButton?.isEnabled = !chatBusy; cancelButton?.isHidden = !chatBusy
+            attachmentButton?.isEnabled = !chatBusy
+            for button in attachmentRemovers { button.isEnabled = !chatBusy }
+        case "attachments":
+            attachments = message["items"] as? [[String:Any]] ?? []
+            if bubbleMode == "chat" { buildBubble(); positionBubble() }
         case "reset": offset = NSPoint(x:-150,y:70); positionPet(); savePosition()
         case "hide": enabled = false; closeBubble(); updateVisibility()
         case "show": enabled = true; updateVisibility()
@@ -277,8 +301,13 @@ final class Overlay: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         return label
     }
     func buildBubble() {
+        draft = input?.stringValue ?? draft
         transcript = nil; input = nil; sendButton = nil; cancelButton = nil
-        let glass = NSVisualEffectView(); glass.material = .popover; glass.blendingMode = .behindWindow; glass.state = .active
+        attachmentRemovers = []
+        let extraHeight = bubbleMode == "chat" && !attachments.isEmpty ? min(attachments.count,3)*27+12 : 0
+        let glass = AttachmentGlass(); glass.owner = self
+        if bubbleMode == "chat" { glass.registerForDraggedTypes([.fileURL]) }
+        glass.material = .popover; glass.blendingMode = .behindWindow; glass.state = .active
         glass.wantsLayer = true; glass.layer?.cornerRadius = 18; glass.layer?.masksToBounds = true
         bubble.contentView = glass; bubble.hasShadow = true
         let stack = NSStackView(); stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 12
@@ -286,7 +315,8 @@ final class Overlay: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo:glass.leadingAnchor,constant:16),stack.trailingAnchor.constraint(equalTo:glass.trailingAnchor,constant:-16),stack.topAnchor.constraint(equalTo:glass.topAnchor,constant:14),stack.bottomAnchor.constraint(equalTo:glass.bottomAnchor,constant:-14)])
         let header = NSStackView(); header.orientation = .horizontal; header.spacing = 8
         header.addArrangedSubview(text("小蕾米",font:.systemFont(ofSize:14,weight:.semibold)))
-        header.addArrangedSubview(ActionButton(bubbleMode == "chat" ? "动态 \(items.count)" : "聊天") { [weak self] in guard let self else { return }; self.toggleBubble(self.bubbleMode == "chat" ? "activities" : "chat",force:true) })
+        let activity = ActionButton(bubbleMode == "chat" ? "动态 \(items.count)" : "聊天") { [weak self] in guard let self else { return }; self.toggleBubble(self.bubbleMode == "chat" ? "activities" : "chat",force:true) }
+        activityButton = activity; header.addArrangedSubview(activity)
         header.addArrangedSubview(ActionButton("关闭") { [weak self] in self?.closeBubble() })
         stack.addArrangedSubview(header)
         if bubbleMode == "chat" {
@@ -298,7 +328,30 @@ final class Overlay: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             body.setAccessibilityLabel("聊天记录"); scroll.documentView = body; transcript = body
             stack.addArrangedSubview(scroll); scroll.widthAnchor.constraint(equalTo:stack.widthAnchor).isActive = true
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant:210).isActive = true
+            if !attachments.isEmpty {
+                let fileScroll = NSScrollView(); fileScroll.hasVerticalScroller = attachments.count > 3; fileScroll.drawsBackground = false
+                let files = FlippedStack(); files.orientation = .vertical; files.alignment = .leading; files.spacing = 3; files.translatesAutoresizingMaskIntoConstraints = false
+                fileScroll.documentView = files
+                for item in attachments {
+                    guard let id = item["id"] as? String, let name = item["name"] as? String else { continue }
+                    let row = NSStackView(); row.orientation = .horizontal; row.spacing = 6
+                    let kind = ["image":"图片","text":"文本","reference":"本地引用"][item["kind"] as? String ?? ""] ?? "附件"
+                    let label = text("\(kind) · \(name)",font:.systemFont(ofSize:11),color:.secondaryLabelColor)
+                    label.maximumNumberOfLines = 1; label.lineBreakMode = .byTruncatingMiddle; label.toolTip = name
+                    label.setContentCompressionResistancePriority(.defaultLow,for:.horizontal)
+                    row.addArrangedSubview(label)
+                    let remove = ActionButton("移除") { emit(["type":"removeAttachment","id":id]) }; remove.isEnabled = !chatBusy; row.addArrangedSubview(remove)
+                    attachmentRemovers.append(remove)
+                    files.addArrangedSubview(row); row.widthAnchor.constraint(equalToConstant:300).isActive = true
+                }
+                stack.addArrangedSubview(fileScroll); fileScroll.widthAnchor.constraint(equalTo:stack.widthAnchor).isActive = true
+                fileScroll.heightAnchor.constraint(equalToConstant:CGFloat(min(attachments.count,3)*27)).isActive = true
+                files.leadingAnchor.constraint(equalTo:fileScroll.contentView.leadingAnchor).isActive = true
+                files.trailingAnchor.constraint(equalTo:fileScroll.contentView.trailingAnchor).isActive = true
+                files.topAnchor.constraint(equalTo:fileScroll.contentView.topAnchor).isActive = true
+            }
             let field = NSTextField(); field.placeholderString = "问点什么…"; field.delegate = self
+            field.stringValue = draft
             field.target = self; field.action = #selector(submit); field.setAccessibilityLabel("发送给小蕾米的消息")
             stack.addArrangedSubview(field); field.widthAnchor.constraint(equalTo:stack.widthAnchor).isActive = true; input = field
             let row = NSStackView(); row.orientation = .horizontal
@@ -309,6 +362,7 @@ final class Overlay: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             stack.addArrangedSubview(row)
             let tools = NSStackView(); tools.orientation = .horizontal
             tools.addArrangedSubview(text(chatBackend == "codex" ? "Codex 账号" : "编辑器模型",font:.systemFont(ofSize:10),color:.secondaryLabelColor))
+            let attach = ActionButton("附件") { [weak self] in self?.chooseAttachments() }; attach.isEnabled = !chatBusy; attachmentButton = attach; tools.addArrangedSubview(attach)
             tools.addArrangedSubview(ActionButton("新聊天") { emit(["type":"newChat"]) })
             if chatBackend == "codex" { tools.addArrangedSubview(ActionButton("历史") { emit(["type":"history"]) }) }
             stack.addArrangedSubview(tools)
@@ -339,13 +393,26 @@ final class Overlay: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
             list.trailingAnchor.constraint(equalTo:scroll.contentView.trailingAnchor).isActive = true
             list.topAnchor.constraint(equalTo:scroll.contentView.topAnchor).isActive = true
         }
+        glass.layoutSubtreeIfNeeded()
+        bubble.setContentSize(NSSize(width:350,height:390+extraHeight))
+        if bubbleMode == "chat" { bubble.makeFirstResponder(input) }
     }
 
     @objc func submit() {
-        guard !chatBusy, let value = input?.stringValue.trimmingCharacters(in:.whitespacesAndNewlines), !value.isEmpty else { return }
+        guard !chatBusy, let value = input?.stringValue.trimmingCharacters(in:.whitespacesAndNewlines), !value.isEmpty || !attachments.isEmpty else { return }
         chatBusy = true; sendButton?.isEnabled = false; cancelButton?.isHidden = false
-        input?.stringValue = ""; emit(["type":"chat","text":String(value.prefix(16000))])
+        input?.stringValue = ""; draft = ""; emit(["type":"chat","text":String(value.prefix(16000))])
     }
+    func chooseAttachments() {
+        guard !chatBusy else { return }
+        let picker = NSOpenPanel(); picker.title = "添加附件"; picker.prompt = "添加"
+        picker.message = "图片和文本随消息发送；其他文档作为本地引用，需要账号后端。最多 8 个文件，共 16 MB。"
+        picker.canChooseDirectories = false; picker.canChooseFiles = true; picker.allowsMultipleSelection = true
+        picker.beginSheetModal(for:bubble) { result in
+            if result == .OK { emit(["type":"addAttachments","paths":picker.urls.map(\.path)]) }
+        }
+    }
+    func controlTextDidChange(_ obj: Notification) { draft = input?.stringValue ?? draft }
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) { closeBubble(); return true }
         return false
@@ -369,7 +436,7 @@ final class Overlay: NSObject, NSApplicationDelegate, NSTextFieldDelegate {
         }
     }
     func writeSnapshot() {
-        let value: [String:Any] = ["type":"snapshot","chatBackend":chatBackend,"chatBusy":chatBusy,"transcriptCharacters":response.count,"visible":panel.isVisible,"focused":focused,"editorPID":Int(editorPID ?? 0),"frontBundle":NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "none","frontPID":Int(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0),"state":clock.state,"row":currentFrame.row,"column":currentFrame.column,"frame":["x":panel.frame.minX,"y":panel.frame.minY,"width":panel.frame.width,"height":panel.frame.height],"activities":items.count,"bubble":bubbleMode ?? "none","ownerFound":ownerRect != nil,"clickThrough":panel.ignoresMouseEvents]
+        let value: [String:Any] = ["type":"snapshot","chatBackend":chatBackend,"chatBusy":chatBusy,"attachments":attachments.count,"draftCharacters":draft.count,"bubbleHeight":bubble.frame.height,"transcriptCharacters":response.count,"visible":panel.isVisible,"focused":focused,"editorPID":Int(editorPID ?? 0),"frontBundle":NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "none","frontPID":Int(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0),"state":clock.state,"row":currentFrame.row,"column":currentFrame.column,"frame":["x":panel.frame.minX,"y":panel.frame.minY,"width":panel.frame.width,"height":panel.frame.height],"activities":items.count,"bubble":bubbleMode ?? "none","ownerFound":ownerRect != nil,"clickThrough":panel.ignoresMouseEvents]
         emit(value)
         if let stateFile, let data = try? JSONSerialization.data(withJSONObject:value,options:[.prettyPrinted,.sortedKeys]) { try? data.write(to:URL(fileURLWithPath:stateFile),options:.atomic) }
     }

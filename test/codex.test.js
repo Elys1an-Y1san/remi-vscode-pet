@@ -75,6 +75,13 @@ test('resume transcript includes user and assistant text only',()=>{
   assert.equal(transcriptFromThread({turns:[{items:[{type:'userMessage',content:[{type:'text',text:'Question'}]},{type:'commandExecution',command:'secret'},{type:'agentMessage',text:'Answer'}]}]}),'你：Question\n\n小蕾米：Answer');
 });
 
+test('resumed attachment messages keep filenames without dumping the transport payload',()=>{
+  const {codexInput}=require('../src/attachments');
+  const input=codexInput('Read the note',[{name:'note.txt',kind:'text',text:'private file body'}]);
+  const transcript=transcriptFromThread({turns:[{items:[{type:'userMessage',content:input}]}]});
+  assert.ok(transcript.includes('note.txt'));assert.ok(!transcript.includes('private file body'));
+});
+
 test('file approval includes the proposed diff from its matching item',async()=>{
   const f=await fixture();try{
     let detail;const result=f.client.turn('Edit',{onRequest:async(_method,params)=>{detail=params;return{decision:'decline'};}});f.begin();

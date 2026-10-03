@@ -34,7 +34,7 @@ class CodexClient extends EventEmitter {
     this.child.stdin.on('error',()=>this.fail(Error('账号服务连接已断开')));
     this.child.on('error',error=>this.fail(Error(error.code==='ENOENT'?'找不到 Codex CLI，请设置 remi.codexPath。':`无法启动账号服务：${error.code || 'unknown'}`)));
     this.child.on('exit',()=>this.fail(Error('账号服务已退出，请重试')));
-    await this.request('initialize',{clientInfo:{name:'remi_vscode_pet',title:'Remi companion',version:'0.2.0'},capabilities:{experimentalApi:true}});
+    await this.request('initialize',{clientInfo:{name:'remi_vscode_pet',title:'Remi companion',version:'0.3.0'},capabilities:{experimentalApi:true}});
     this.write({method:'initialized',params:{}});
   }
   write(message) {
@@ -105,7 +105,7 @@ class CodexClient extends EventEmitter {
     const result=await this.request(threadId?'thread/resume':'thread/start',threadId?{...options,threadId}:{...options,ephemeral},120000);
     this.threadId=result.thread.id;return result.thread;
   }
-  turn(text,{onText,onRequest,onActivity,signal}={}) {
+  turn(text,{onText,onRequest,onActivity,signal,input}={}) {
     if(!this.threadId || this.active)return Promise.reject(Error('会话未就绪或正在回复'));
     if(signal?.aborted)return Promise.resolve({text:'',interrupted:true});
     return new Promise((resolve,reject)=>{
@@ -114,7 +114,7 @@ class CodexClient extends EventEmitter {
       this.active={resolve,reject,onText,onRequest,onActivity,messages:new Map(),tools:new Map(),timer,signal,cancel};
       const active=this.active;
       signal?.addEventListener('abort',cancel,{once:true});
-      this.request('turn/start',{threadId:this.threadId,input:[{type:'text',text,text_elements:[]}]},120000)
+      this.request('turn/start',{threadId:this.threadId,input:input||[{type:'text',text,text_elements:[]}]},120000)
         .then(result=>{if(this.active===active){active.turnId=result.turn.id;if(active.cancelled)this.interrupt();}})
         .catch(error=>{if(this.active===active)this.fail(error);});
     });
@@ -148,7 +148,7 @@ class CodexClient extends EventEmitter {
 function transcriptFromThread(thread) {
   return (thread.turns||[]).flatMap(turn=>(turn.items||[]).flatMap(item=>{
     if(item.type==='agentMessage')return [`小蕾米：${item.text}`];
-    if(item.type==='userMessage')return [`你：${(item.content||[]).filter(x=>x.type==='text').map(x=>x.text).join('\n')}`];
+    if(item.type==='userMessage')return [`你：${(item.content||[]).filter((x,index)=>x.type==='text' && !(index>0 && (x.text.startsWith('用户附带的文本资料（') || x.text.startsWith('用户主动选择的本地附件：')))).map(x=>x.text).join('\n')}`];
     return [];
   })).join('\n\n').slice(-60000);
 }

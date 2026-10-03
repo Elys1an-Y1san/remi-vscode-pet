@@ -1,0 +1,12 @@
+{
+  "date": "2026-10-03",
+  "cliVersion": "0.159.0-alpha.12.1",
+  "accountAuth": "chatgpt",
+  "transport": "websocket",
+  "outputModality": "text",
+  "startRequestAccepted": true,
+  "upstreamReady": false,
+  "terminalEvent": "thread/realtime/error",
+  "message": "realtime conversation requires API key auth",
+  "microphoneAccessed": false
+}

@@ -8,7 +8,7 @@ root = Path(__file__).resolve().parent.parent
 package = root / "remi-companion.vsix"
 asset = root / "assets/remi.png"
 with zipfile.ZipFile(package) as archive:
-    for relative in ["assets/remi.png", "src/extension.js", "src/activity.js", "src/codex.js",
+    for relative in ["assets/remi.png", "src/extension.js", "src/activity.js", "src/codex.js", "src/attachments.js",
                      "native/build/RemiOverlay.app/Contents/MacOS/RemiOverlay"]:
         assert archive.read("extension/" + relative) == (root / relative).read_bytes(), relative
     assert not any("node_modules/" in name or "evidence/" in name for name in archive.namelist())

@@ -1,8 +1,8 @@
 {
-  "version": "0.2.0",
+  "version": "0.3.0",
   "assetSHA256": "d76b1beca002be412ce372aef78a592b27b238bea56e4412fb3e4c6f5efc9d8f",
-  "packageSHA256": "069cb6c02054ed3c6506fb7fda0db2be0e40e4c4c9721e491735db633793494b",
-  "packageBytes": 4449175,
+  "packageSHA256": "d0c27d26bd94f093a7f1b788a566009f1bfd97488bcafcd33974855d0832048f",
+  "packageBytes": 4464724,
   "originalAssetUnchanged": true,
   "sourceAndBinaryMatchPackage": true,
   "target": "darwin-arm64",

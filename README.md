@@ -2,7 +2,7 @@
 
 ［KNOWN｜HIGH］使用原始“小蕾米”透明动画素材，在 macOS 的 VS Code 编辑器上方显示原生悬浮宠物。不是侧栏页面。当前安装包适用于 Apple Silicon，macOS 13 或更新版本。
 
-［KNOWN｜HIGH］当前为 **0.2.0 预发布版**。[下载 VSIX 安装包](https://github.com/Elys1an-Y1san/remi-vscode-pet/releases/tag/v0.2.0)。自动化与宿主测试通过的项目和未完成的实机覆盖，分别记录在 `evidence/manual-qa.md` 中。
+［KNOWN｜HIGH］当前为 **0.3.0 预发布版**。[下载 VSIX 安装包](https://github.com/Elys1an-Y1san/remi-vscode-pet/releases/tag/v0.3.0)。自动化与宿主测试通过的项目和未完成的实机覆盖，分别记录在 `evidence/manual-qa.md` 中。
 
 ## 使用
 
@@ -24,7 +24,15 @@
 
 ［COMPUTED｜HIGH］真实账号流式回复、断开重连后的会话恢复、首次输出后中断已通过；协议依据 [Codex App Server 官方文档](https://developers.openai.com/codex/app-server)。旧 CLI 可能无法使用新模型，可通过 `remi.codexPath` 指定更新版本。
 
-［KNOWN｜HIGH］原版云聊天同步、实时语音、屏幕分享、文件附件、跨聊天审批及宠物云分享仍未接入，不宣称“全部功能一比一”。逐项对应见源码中的 `docs/parity.md`。
+［KNOWN｜HIGH］原版云聊天同步、实时语音、屏幕分享、跨聊天审批及宠物云分享仍未接入，不宣称“全部功能一比一”。逐项对应见源码中的 `docs/parity.md`。
+
+## 附件
+
+［KNOWN｜HIGH］在聊天浮窗点击“附件”选择文件，列表支持逐项移除；选择附件和切换面板时保留当前输入草稿。每次最多 8 个文件、总计 16 MB。可只发送附件，不填写问题。
+
+［KNOWN｜HIGH］图片以原始字节发送，支持 PNG、JPEG、GIF、WebP；小于等于 256 KiB 的 UTF-8 文本以文本资料发送。其他文档及较大的文本显示为“本地引用”，仅账号后端支持按需读取，不能保证模型运行环境具有每种文档的解析工具。图片输入需要支持图片的模型；不支持时保留附件并提示，不会静默忽略。
+
+［COMPUTED｜HIGH］真实账号及原生浮窗均已收到图片和文本附件并返回准确内容。成功回复后清空本次附件，失败或中断时保留。发送前选择的图片与文本按当时内容保留；本地引用在发送前检查文件是否发生改变。文件拖入入口已实现，但受界面自动化限制，物理拖入尚未验证；剪贴板图片粘贴尚未实现。
 
 ## 安装和开发
 
@@ -38,6 +46,8 @@ npm run test:host
 npm run package
 # 可选：调用真实账号，创建并归档独立测试会话
 npm run test:account
+# 可选：合成图片和文本的真实账号验证
+npm run test:attachments
 ```
 
 ［KNOWN｜HIGH］构建原生组件需要系统 Swift 编译器；安装包自带已构建组件，使用时不需要编译。运行时无 npm 依赖，不修改编辑器安装文件，不申请辅助功能权限，不启动网络监听服务。

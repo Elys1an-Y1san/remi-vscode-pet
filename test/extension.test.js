@@ -29,11 +29,12 @@ function harness({store=new Map(),trusted=true,models=[],settings={},accountClas
   debug:{onDidStartDebugSession:event('debugStart'),onDidTerminateDebugSession:event('debugEnd')},
   CancellationTokenSource:class{constructor(){this.token={isCancellationRequested:false};}cancel(){this.token.isCancellationRequested=true;}dispose(){}},
   lm:{selectChatModels:async()=>state.models},
-  LanguageModelChatMessage:{User:content=>({role:'user',content}),Assistant:content=>({role:'assistant',content})}
+  LanguageModelChatMessage:{User:content=>({role:'user',content}),Assistant:content=>({role:'assistant',content})},
+  LanguageModelTextPart:class{constructor(value){this.value=value;}},LanguageModelDataPart:{image:(data,mime)=>({data,mime})}
  };
  const context={subscriptions,globalState:{get:(key,fallback)=>store.has(key)?store.get(key):fallback,update:async(key,value)=>store.set(key,value)},asAbsolutePath:file=>path.resolve(file)};
  const box={module:{exports:{}},exports:{},process:{platform:'darwin',arch:'arm64',pid:123},setTimeout,clearTimeout,console,AbortController,
-  require:id=>id==='vscode'?vscode:id==='node:child_process'?{spawn:()=>child,execFileSync:()=> '1 /Applications/Code.app/Contents/MacOS/Code'}:id==='node:fs'?{existsSync:()=>true}:id==='./activity'?{Activities,STATES}:id==='./codex'?{...require('../src/codex'),...(accountClass?{CodexClient:accountClass}:{})}:require(id)};
+  require:id=>id==='vscode'?vscode:id==='node:child_process'?{spawn:()=>child,execFileSync:()=> '1 /Applications/Code.app/Contents/MacOS/Code'}:id==='node:fs'?{existsSync:()=>true}:id==='./activity'?{Activities,STATES}:id==='./codex'?{...require('../src/codex'),...(accountClass?{CodexClient:accountClass}:{})}:id==='./attachments'?require('../src/attachments'):require(id)};
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../src/extension.js'),'utf8'),box);
  const api=box.module.exports.activate(context);native({type:'ready',frames:73,pid:222});
  return{api,native,messages,commands,handlers,state,store,dispose(){for(const disposable of subscriptions)disposable.dispose();child.stdout.end();child.stderr.end();}};
@@ -127,4 +128,26 @@ test('stopping while an approval is open resolves it as decline and clears pendi
  }
  const h=harness({settings:{chatBackend:'codex'},accountClass:FakeAccount});
  try{h.native({type:'chat',text:'Hello'});await until(()=>h.api.inspect().state==='waiting');h.native({type:'cancelChat'});await until(()=>answer);assert.equal(answer.decision,'decline');await until(()=>h.api.inspect().items.length===0);}finally{h.dispose();}
+});
+
+
+test('image-only draft reaches account input and is removed only after success',async()=>{
+ const os=require('node:os');const dir=fs.mkdtempSync(path.join(os.tmpdir(),'remi-image-'));const file=path.join(dir,'image.png');
+ fs.writeFileSync(file,Buffer.from([137,80,78,71,13,10,26,10]));let input;
+ class FakeAccount extends EventEmitter{async open(){return{id:'image-thread'};}async turn(_text,options){input=options.input;return{text:'Image reply',interrupted:false};}dispose(){this.closed=true;}}
+ const h=harness({settings:{chatBackend:'codex'},accountClass:FakeAccount});
+ try{h.native({type:'addAttachments',paths:[file]});await until(()=>h.messages.findLast(m=>m.type==='attachments')?.items.length===1);
+ h.native({type:'chat',text:''});await until(()=>h.messages.some(m=>m.type==='chat'&&!m.busy&&m.text.includes('Image reply')));
+ assert.equal(input[1].type,'image');assert.equal(h.messages.findLast(m=>m.type==='attachments').items.length,0);
+ }finally{h.dispose();fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('unsupported images stay attached and never reach a text-only provider',async()=>{
+ const os=require('node:os');const dir=fs.mkdtempSync(path.join(os.tmpdir(),'remi-image-'));const file=path.join(dir,'image.png');
+ fs.writeFileSync(file,Buffer.from([137,80,78,71,13,10,26,10]));let sent=false;
+ const h=harness({models:[{id:'text',capabilities:{imageInput:false},sendRequest:async()=>{sent=true;}}]});
+ try{h.native({type:'addAttachments',paths:[file]});await until(()=>h.messages.findLast(m=>m.type==='attachments')?.items.length===1);
+ h.native({type:'chat',text:'Look'});await until(()=>h.messages.some(m=>m.type==='chat'&&!m.busy&&m.text.includes('不支持图片')));
+ assert.equal(sent,false);assert.equal(h.messages.findLast(m=>m.type==='attachments').items.length,1);
+ }finally{h.dispose();fs.rmSync(dir,{recursive:true,force:true});}
 });
